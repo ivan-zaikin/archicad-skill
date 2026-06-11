@@ -63,7 +63,10 @@ python scripts/ac.py values Wall General_NetVolume,General_Area > walls.json
   (так делает ac.py types). Сомневаешься — сверься с supported_commands.json
   или прогони `scripts/probe_commands.py`.
 - Свойство объёма называется `General_NetVolume` (не `General_Volume`),
-  площади — `General_Area`. Этаж: `General_HomeStoryName`.
+  площади — `General_Area`. Свойства с **именем** этажа в AC25 нет
+  (`General_HomeStoryName` появился в более новых версиях): отметку этажа
+  элемента вычисляй как `General_BottomElevationToProjectZero` −
+  `General_BottomElevationToHomeStory` и группируй по ней.
 - Списки elements/properties требуют обёрток: `{"elementId": {...}}`,
   `{"propertyId": {...}}` — голые guid дают ошибку 4002.
 - API спокойно обрабатывает запросы на десятки тысяч элементов за один вызов —
@@ -75,6 +78,10 @@ python scripts/ac.py values Wall General_NetVolume,General_Area > walls.json
 - Ошибка соединения = Archicad не запущен или проект не открыт.
 - Локализованные имена (RUS-версия) встречаются в значениях свойств — это
   нормально; nonLocalizedName свойств всегда английские.
+- Перечисления (например, `Construction_StructureType`) сырой API отдаёт
+  обёрткой `{"type": "nonLocalizedValue", "nonLocalizedValue": "Basic"}`;
+  `ac.py values` разворачивает её в строку автоматически, в сыром
+  `ac.py call` разворачивай сам.
 
 ## Формат результатов
 

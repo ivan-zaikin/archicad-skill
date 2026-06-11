@@ -44,8 +44,10 @@ def main() -> None:
         "",
         "Самые ходовые: `General_NetVolume` (объём), `General_Area` (площадь),"
         " `General_Height`, `General_ElementID`, `General_TypeName`,"
-        " `General_HomeStoryName` (этаж), `Zone_ZoneName`, `Zone_CalculatedArea`,"
-        " `Zone_NetArea`, `Zone_ZoneCategoryCode`.",
+        " `Zone_ZoneName`, `Zone_NetArea`, `Zone_ZoneCategoryCode`."
+        " Имени этажа среди встроенных свойств нет — вычисляй отметку этажа"
+        " как `General_BottomElevationToProjectZero` −"
+        " `General_BottomElevationToHomeStory`.",
         "",
     ]
     for prefix in sorted(groups):

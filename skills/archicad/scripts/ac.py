@@ -135,9 +135,18 @@ def cmd_values(args: list[str]) -> None:
     for element, value_set in zip(elements, values):
         row = {"guid": element["elementId"]["guid"]}
         for name, pv in zip(prop_names, value_set.get("propertyValues", [])):
-            row[name] = pv.get("propertyValue", {}).get("value")
+            row[name] = unwrap(pv.get("propertyValue", {}).get("value"))
         rows.append(row)
     out(rows)
+
+
+def unwrap(value):
+    # Перечисления приходят как {"type": "nonLocalizedValue", "nonLocalizedValue": ...}
+    if isinstance(value, dict):
+        return value.get("nonLocalizedValue", value.get("displayValue", value))
+    if isinstance(value, list):
+        return [unwrap(v) for v in value]
+    return value
 
 
 def main() -> None:

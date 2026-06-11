@@ -4,7 +4,7 @@
 
 Использование: `GetPropertyIds` с `{"type": "BuiltIn", "nonLocalizedName": "<имя>"}`, затем `GetPropertyValuesOfElements`.
 
-Самые ходовые: `General_NetVolume` (объём), `General_Area` (площадь), `General_Height`, `General_ElementID`, `General_TypeName`, `General_HomeStoryName` (этаж), `Zone_ZoneName`, `Zone_CalculatedArea`, `Zone_NetArea`, `Zone_ZoneCategoryCode`.
+Самые ходовые: `General_NetVolume` (объём), `General_Area` (площадь), `General_Height`, `General_ElementID`, `General_TypeName`, `Zone_ZoneName`, `Zone_NetArea`, `Zone_ZoneCategoryCode`. Имени этажа среди встроенных свойств нет — вычисляй отметку этажа как `General_BottomElevationToProjectZero` − `General_BottomElevationToHomeStory`.
 
 ## AnalyticalModel (14)
 

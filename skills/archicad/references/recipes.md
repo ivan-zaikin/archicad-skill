@@ -6,27 +6,35 @@
 ## Экспликация помещений (зоны)
 
 ```bash
-python scripts/ac.py values Zone Zone_ZoneName,Zone_ZoneNumber,Zone_CalculatedArea,General_HomeStoryName > zones.json
+python scripts/ac.py values Zone Zone_ZoneName,Zone_ZoneNumber,Zone_NetArea,Zone_CalculatedArea > zones.json
 ```
 
 Затем агрегируй: группировка по имени/этажу, сумма площадей. Полезные свойства:
-`Zone_NetArea`, `Zone_ReducedArea`, `Zone_ZoneCategoryCode`,
+`Zone_ReducedArea`, `Zone_ZoneCategoryCode`,
 `Zone_WallsSurfaceArea` (площадь стен зоны — для отделки).
+Внимание: `Zone_CalculatedArea` бывает 0, если зоны в проекте не пересчитаны —
+надёжнее `Zone_NetArea` (выгрузи обе и сравни).
 
 ## Ведомость объёмов (стены, перекрытия, колонны...)
 
 ```bash
-python scripts/ac.py values Wall General_NetVolume,General_Area,General_HomeStoryName > walls.json
-python scripts/ac.py values Slab General_NetVolume,General_NetTopSurfaceArea > slabs.json
+python scripts/ac.py values Wall General_NetVolume,General_Area,Construction_CompositeName,Construction_StructureType > walls.json
+python scripts/ac.py values Slab General_NetVolume,General_NetTopSurfaceArea,Construction_CompositeName,ModelView_LayerName,General_Thickness > slabs.json
 ```
 
 `General_NetVolume` — чистый объём (с вычетом проёмов), `General_GrossVolume` —
 брутто. Для расчёта бетона/кладки обычно нужен Net.
+Не суммируй всё подряд: сначала сгруппируй по слою (`ModelView_LayerName`),
+структуре (`Construction_CompositeName` / `Construction_StructureType`) и
+толщине — в реальных проектах попадаются служебные болванки (слои вроде
+«скрыт», толщины в несколько метров). Покажи разбивку пользователю и исключи
+мусор. У composite-элементов NetVolume включает все слои; чистый бетон
+несущего слоя считай через компоненты (см. «Состав конструкций»).
 
 ## Окна и двери (спецификация)
 
 ```bash
-python scripts/ac.py values Window General_ElementID,WindowDoor_Width,WindowDoor_Height,General_HomeStoryName > windows.json
+python scripts/ac.py values Window General_ElementID,WindowDoor_Width,WindowDoor_Height > windows.json
 ```
 
 Размеры в метрах. Группируй по (ширина, высота) или по `General_ElementID`
@@ -96,9 +104,12 @@ set.json:
 
 ## Этажи
 
-Отдельной команды списка этажей в AC25 нет. Практичный способ — выгрузить
-`General_HomeStoryName` (имя) и `General_TopLinkStory`/`General_BottomElevationToHomeStory`
-по элементам, либо собрать уникальные значения имён этажей из выгрузки.
+Отдельной команды списка этажей в AC25 нет, и встроенного свойства с
+**именем** этажа тоже нет (`General_HomeStoryName` — из более новых версий,
+в AC25 даёт ошибку 4005). Практичная привязка элемента к этажу — отметка
+его собственного этажа: `General_BottomElevationToProjectZero` −
+`General_BottomElevationToHomeStory` (обе в метрах). Группируй по этой
+разности; уникальные её значения дают и список этажей проекта.
 
 ## Атрибуты (слои, материалы, поверхности)
 

@@ -114,6 +114,23 @@ set.json:
 `General_BottomElevationToHomeStory` (обе в метрах). Группируй по этой
 разности; уникальные её значения дают и список этажей проекта.
 
+## Конкретный элемент по GUID
+
+GUID — единственный уникальный идентификатор (поле «ИД элемента» НЕ уникально:
+оно копируется вместе с элементом, тысячи элементов могут носить один ИД).
+Пользователь видит GUID выделенного элемента в Archicad: Окно → Панели →
+Информация об элементе. Зная guid, свойства берутся напрямую, тип элемента —
+свойство `General_Type` (локализованное: «Стена», «Зона»...; `General_TypeName`
+в AC25 нет):
+
+```python
+from ac import call, get_property_ids
+pids = get_property_ids(['General_Type', 'General_ElementID', 'General_NetVolume'])
+call('API.GetPropertyValuesOfElements', {
+    'elements': [{'elementId': {'guid': '...'}}],
+    'properties': [{'propertyId': p} for p in pids]})
+```
+
 ## Сколько отдельных зданий в проекте
 
 Понятия «здание/корпус» в API нет. Рабочий приём — пространственная

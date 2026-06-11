@@ -43,7 +43,8 @@ def main() -> None:
         " затем `GetPropertyValuesOfElements`.",
         "",
         "Самые ходовые: `General_NetVolume` (объём), `General_Area` (площадь),"
-        " `General_Height`, `General_ElementID`, `General_TypeName`,"
+        " `General_Height`, `General_ElementID`,"
+        " `General_Type` (тип элемента, локализованный; `General_TypeName` в AC25 нет),"
         " `Zone_ZoneName`, `Zone_NetArea`, `Zone_ZoneCategoryCode`."
         " Имени этажа среди встроенных свойств нет — вычисляй отметку этажа"
         " как `General_BottomElevationToProjectZero` −"

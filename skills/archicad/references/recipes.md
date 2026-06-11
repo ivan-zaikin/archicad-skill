@@ -34,11 +34,14 @@ python scripts/ac.py values Slab General_NetVolume,General_NetTopSurfaceArea,Con
 ## Окна и двери (спецификация)
 
 ```bash
-python scripts/ac.py values Window General_ElementID,WindowDoor_Width,WindowDoor_Height > windows.json
+python scripts/ac.py values Window General_ElementID,General_Width,General_Height,WindowDoor_WHSize > windows.json
 ```
 
-Размеры в метрах. Группируй по (ширина, высота) или по `General_ElementID`
-для маркировки. Двери — тип `Door`, те же свойства WindowDoor_*.
+Размеры в метрах (`WindowDoor_WHSize` — готовая строка «ш×в»). Свойств
+`WindowDoor_Width/Height` в AC25 **нет** (ошибка 4005) — габариты проёма
+бери из `General_Width`/`General_Height`. Группируй по размеру или по
+`General_ElementID`/`WindowDoor_MarkerText` для маркировки. Двери — тип
+`Door`, свойства те же.
 
 ## Состав конструкций (слои многослойных стен)
 

@@ -19,7 +19,7 @@
 для github.com). Затем в Claude Code:
 
 ```
-/plugin marketplace add tnixton/archicad-skill
+/plugin marketplace add ivan-zaikin/archicad-skill
 /plugin install archicad-skill@archicad-skill
 ```
 
@@ -28,7 +28,7 @@
 ### Способ 2: вручную, без плагина
 
 ```
-git clone https://github.com/tnixton/archicad-skill.git
+git clone https://github.com/ivan-zaikin/archicad-skill.git
 ```
 
 и скопировать папку `skills/archicad` в `~/.claude/skills/archicad`

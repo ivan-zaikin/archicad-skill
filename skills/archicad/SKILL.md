@@ -48,6 +48,19 @@ python scripts/ac.py values Wall General_NetVolume,General_Area > walls.json
 классификации) пиши Python-скрипт, импортируя функции из ac.py:
 `from ac import call, get_property_ids`.
 
+**Если Python недоступен** — `scripts/ac.ps1`: PowerShell-порт с теми же
+командами и форматом вывода (info, call, types, find-prop, values), работает
+на голой Windows без установки чего-либо:
+
+```
+pwsh -File scripts/ac.ps1 values Wall General_NetVolume,General_Area
+```
+
+Все рецепты переносятся 1:1 (замени `python scripts/ac.py` на
+`./ac.ps1`). Агрегацию делай средствами PowerShell: `ConvertFrom-Json`,
+`Group-Object`, `Measure-Object -Sum`. Для разовых сырых вызовов хватает
+и curl: `curl -X POST http://127.0.0.1:19723 -H "Content-Type: application/json" -d "{\"command\":\"API.GetProductInfo\"}"`.
+
 ## Справочники (читай по необходимости)
 
 - `references/commands.md` — все 46 команд AC25 с параметрами и JSON-структурами

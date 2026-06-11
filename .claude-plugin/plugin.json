@@ -1,0 +1,10 @@
+{
+  "name": "archicad-skill",
+  "version": "0.1.0",
+  "description": "Работа с проектами Archicad 25 через JSON API: элементы, свойства, классификации, сводки и расчёты объёмов/площадей.",
+  "author": {
+    "name": "tnixton",
+    "email": "tnixton@gmail.com"
+  },
+  "keywords": ["archicad", "bim", "json-api", "graphisoft"]
+}

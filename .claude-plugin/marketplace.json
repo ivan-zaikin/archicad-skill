@@ -1,0 +1,14 @@
+{
+  "name": "archicad-skill",
+  "owner": {
+    "name": "tnixton",
+    "email": "tnixton@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "archicad-skill",
+      "source": "./",
+      "description": "Работа с проектами Archicad 25 через JSON API: элементы, свойства, классификации, сводки и расчёты объёмов/площадей."
+    }
+  ]
+}

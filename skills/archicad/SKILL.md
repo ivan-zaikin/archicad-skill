@@ -38,11 +38,21 @@ python scripts/ac.py call API.GetAllElements     # произвольная ко
 python scripts/ac.py call API.GetElementsByType "{\"elementType\": \"Zone\"}"
 python scripts/ac.py find-prop Volume            # поиск встроенных свойств
 python scripts/ac.py values Wall General_NetVolume,General_Area > walls.json
+python scripts/ac.py values-for GUID1,GUID2 General_Area,Construction_CompositeName
 ```
 
 `values` — главная рабочая лошадка для сводок: выгружает значения встроенных
 свойств для всех элементов типа. Дальше агрегируй полученный JSON
 коротким Python-скриптом (суммы, группировки, таблицы).
+
+`values-for` — то же, но для **конкретных GUID** (одна зона, найденные колонны,
+отфильтрованные стены): первый аргумент — список guid через запятую, `@файл`
+или `-` (stdin). Не пиши одноразовый Python ради чтения свойств у горстки
+элементов — `values-for` уже делает правильно две вещи, на которых легко
+споткнуться вручную: берёт ответ из ключа `propertyValuesForElements`
+(не `propertyValues`) и разворачивает перечисления. Нераспознанные имена
+свойств обе команды пропускают с предупреждением в stderr, а не валят весь
+запрос (имена сверяй через `find-prop`).
 
 Для сложных запросов (фильтрация по этажам, связки зон с элементами,
 классификации) пиши Python-скрипт, импортируя функции из ac.py:
@@ -87,7 +97,20 @@ pwsh -File scripts/ac.ps1 values Wall General_NetVolume,General_Area
   площади — `General_Area`. Свойства с **именем** этажа в AC25 нет
   (`General_HomeStoryName` появился в более новых версиях): отметку этажа
   элемента вычисляй как `General_BottomElevationToProjectZero` −
-  `General_BottomElevationToHomeStory` и группируй по ней.
+  `General_BottomElevationToHomeStory` и группируй по ней. **Но для зон** эта
+  разность может выйти 0 у всех помещений (homeStory зон совпадает с project
+  zero) — тогда группируй по абсолютной `General_BottomElevationToProjectZero`
+  (для подвала она даёт реальную отметку, напр. −3,15).
+- **Ловушки имён свойств** (каждая даёт ошибку 4005 — всегда сверяй через
+  `find-prop` перед составлением списка): высоты зоны `Zone_Height` **нет** →
+  `General_Height`; у стен `General_NetArea` **нет** → `General_Area`;
+  `Construction_BuildingMaterialName` **нет** → `Construction_CompositeName`
+  (имя многослойной конструкции) или `SurfaceAndMaterials_ComponentBuildingMaterialName`.
+- `GetElementsRelatedToZones` возвращает **неполный** список стен/элементов
+  зоны (часть стен, которые Archicad не «привязал» к зоне, в выборку не
+  попадёт) — для обмеров на нём полагаться нельзя. Полную поверхность стен
+  зоны бери из свойства `Zone_WallsSurfaceArea`; команду используй только для
+  перечисления связанных элементов, не для подсчёта площадей.
 - Списки elements/properties требуют обёрток: `{"elementId": {...}}`,
   `{"propertyId": {...}}` — голые guid дают ошибку 4002.
 - API спокойно обрабатывает запросы на десятки тысяч элементов за один вызов —

@@ -8,10 +8,14 @@
 #   ./ac.ps1 find-prop <подстрока>       — поиск встроенных свойств по имени
 #   ./ac.ps1 values <Тип> <Свойство,..>  — значения встроенных свойств для всех
 #                                          элементов типа (JSON в stdout)
+#   ./ac.ps1 values-for <guid,..> <Свойство,..>
+#                                        — то же для конкретных GUID (список
+#                                          одним аргументом, @файл или - из stdin)
 #
 # Примеры:
 #   ./ac.ps1 call API.GetElementsByType '{"elementType": "Wall"}'
 #   ./ac.ps1 values Wall General_NetVolume,General_Area > walls.json
+#   ./ac.ps1 values-for 'GUID1,GUID2' General_Area,Construction_CompositeName
 #
 # Выход всегда JSON. Код возврата 1 при ошибке.
 
@@ -94,17 +98,56 @@ function Cmd-FindProp([string[]]$CmdArgs) {
     Out-Json $matched
 }
 
-function Get-PropertyIds([string[]]$Names) {
+function Resolve-PropertyIds([string[]]$Names) {
+    # Распознаёт имена без аварийного выхода: возвращает объект с GoodNames, Ids, Bad.
     $query = @($Names | ForEach-Object { @{ type = 'BuiltIn'; nonLocalizedName = $_ } })
     $result = (Invoke-Ac 'API.GetPropertyIds' @{ properties = $query }).properties
-    $ids = @()
+    $goodNames = @(); $ids = @(); $bad = @()
     for ($i = 0; $i -lt $Names.Count; $i++) {
-        if ($null -eq $result[$i].propertyId) {
-            Fail "Свойство $($Names[$i]): $($result[$i].error | ConvertTo-Json -Compress)"
+        if ($null -ne $result[$i].propertyId) {
+            $goodNames += $Names[$i]
+            $ids += $result[$i].propertyId
+        } else {
+            $bad += $Names[$i]
         }
-        $ids += $result[$i].propertyId
     }
-    return $ids
+    [pscustomobject]@{ GoodNames = [string[]]$goodNames; Ids = $ids; Bad = [string[]]$bad }
+}
+
+function Get-PropertyIds([string[]]$Names) {
+    # Строгий вариант: при любом плохом имени — выход с перечислением СРАЗУ ВСЕХ.
+    $r = Resolve-PropertyIds $Names
+    if ($r.Bad.Count -gt 0) {
+        Fail "Свойства не найдены (проверь через find-prop): $($r.Bad -join ', ')"
+    }
+    return $r.Ids
+}
+
+function Get-RowsFor($Elements, [string[]]$PropNames) {
+    # Считывает свойства для элементов; плохие имена пропускает с warning в stderr.
+    $r = Resolve-PropertyIds $PropNames
+    if ($r.Bad.Count -gt 0) {
+        [Console]::Error.WriteLine(
+            (@{ warning = "Свойства пропущены (не найдены): $($r.Bad -join ', ')" } | ConvertTo-Json -Compress))
+    }
+    $goodNames = [string[]]$r.GoodNames
+    if ($r.Ids.Count -eq 0) {
+        return @($Elements | ForEach-Object { [pscustomobject]@{ guid = $_.elementId.guid } })
+    }
+    $values = (Invoke-Ac 'API.GetPropertyValuesOfElements' @{
+        elements   = $Elements
+        properties = @($r.Ids | ForEach-Object { @{ propertyId = $_ } })
+    }).propertyValuesForElements
+
+    $rows = for ($i = 0; $i -lt $Elements.Count; $i++) {
+        $row = [ordered]@{ guid = $Elements[$i].elementId.guid }
+        $pvs = $values[$i].propertyValues
+        for ($j = 0; $j -lt $goodNames.Count; $j++) {
+            $row[$goodNames[$j]] = Unwrap $pvs[$j].propertyValue.value
+        }
+        [pscustomobject]$row
+    }
+    return $rows
 }
 
 function Cmd-Values([string[]]$CmdArgs) {
@@ -113,24 +156,24 @@ function Cmd-Values([string[]]$CmdArgs) {
     $propNames = @($CmdArgs | Select-Object -Skip 1 | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
     $elements = (Invoke-Ac 'API.GetElementsByType' @{ elementType = $elType }).elements
     if ($elements.Count -eq 0) { Out-Json @(); return }
-    $propIds = Get-PropertyIds $propNames
-    $values = (Invoke-Ac 'API.GetPropertyValuesOfElements' @{
-        elements   = $elements
-        properties = @($propIds | ForEach-Object { @{ propertyId = $_ } })
-    }).propertyValuesForElements
-
-    $rows = for ($i = 0; $i -lt $elements.Count; $i++) {
-        $row = [ordered]@{ guid = $elements[$i].elementId.guid }
-        $pvs = $values[$i].propertyValues
-        for ($j = 0; $j -lt $propNames.Count; $j++) {
-            $row[$propNames[$j]] = Unwrap $pvs[$j].propertyValue.value
-        }
-        [pscustomobject]$row
-    }
-    Out-Json $rows
+    Out-Json (Get-RowsFor $elements $propNames)
 }
 
-if (-not $args) { Get-Content $PSCommandPath -TotalCount 17 | Select-Object -Skip 1; exit 0 }
+function Cmd-ValuesFor([string[]]$CmdArgs) {
+    if ($CmdArgs.Count -lt 2) {
+        Fail 'Формат: ac.ps1 values-for <guid,guid,...|@файл|-> <Свойство1,Свойство2,...> (список GUID — одним аргументом, в кавычках)'
+    }
+    $raw = $CmdArgs[0]
+    if ($raw.StartsWith('@')) { $raw = Get-Content -Raw -Encoding utf8 $raw.Substring(1) }
+    elseif ($raw -eq '-') { $raw = [Console]::In.ReadToEnd() }
+    $guids = @($raw -split '[,\r\n]+' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $propNames = @($CmdArgs | Select-Object -Skip 1 | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+    if ($guids.Count -eq 0) { Fail 'Укажите хотя бы один GUID' }
+    $elements = @($guids | ForEach-Object { @{ elementId = @{ guid = $_ } } })
+    Out-Json (Get-RowsFor $elements $propNames)
+}
+
+if (-not $args) { Get-Content $PSCommandPath -TotalCount 20 | Select-Object -Skip 1; exit 0 }
 # PowerShell сам превращает "A,B" в массив — разворачиваем вложенные массивы
 $cmd = $args[0]
 $rest = @()
@@ -140,7 +183,8 @@ switch ($cmd) {
     'info'      { Cmd-Info }
     'call'      { Cmd-Call $rest }
     'types'     { Cmd-Types }
-    'find-prop' { Cmd-FindProp $rest }
-    'values'    { Cmd-Values $rest }
-    default     { Fail "Неизвестная команда: $cmd. Доступно: info, call, types, find-prop, values" }
+    'find-prop'  { Cmd-FindProp $rest }
+    'values'     { Cmd-Values $rest }
+    'values-for' { Cmd-ValuesFor $rest }
+    default      { Fail "Неизвестная команда: $cmd. Доступно: info, call, types, find-prop, values, values-for" }
 }

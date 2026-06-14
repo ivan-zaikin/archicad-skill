@@ -8,12 +8,16 @@
   python ac.py find-prop <подстрока>      — поиск встроенных свойств по имени
   python ac.py values <Тип> <Свойство,..> — значения встроенных свойств для всех
                                             элементов типа (JSON в stdout)
+  python ac.py values-for <guid,..> <Свойство,..>
+                                          — то же, но для конкретных GUID
+                                            (список, @файл или - из stdin)
 
 Примеры:
   python ac.py call API.GetAllElements
   python ac.py call API.GetElementsByType "{\"elementType\": \"Wall\"}"
   python ac.py find-prop Volume
   python ac.py values Wall General_NetVolume,General_Area > walls.json
+  python ac.py values-for AAAA-...,BBBB-... General_Area,Construction_CompositeName
 
 Выход всегда JSON (удобно для дальнейшей обработки). Код возврата 1 при ошибке.
 """
@@ -101,28 +105,56 @@ def cmd_find_prop(args: list[str]) -> None:
     out(matches)
 
 
-def get_property_ids(names: list[str]) -> list[dict]:
+def resolve_property_ids(names: list[str]) -> tuple[list[str], list[dict], list[str]]:
+    """Распознаёт имена свойств без аварийного выхода.
+
+    Возвращает (хорошие_имена, их_propertyId в том же порядке, плохие_имена).
+    Удобно, когда часть имён может быть с опечаткой/неприменима — остальные
+    всё равно обработаются.
+    """
     result = call(
         "API.GetPropertyIds",
         {"properties": [{"type": "BuiltIn", "nonLocalizedName": n} for n in names]},
     )["properties"]
-    ids = []
+    good_names: list[str] = []
+    ids: list[dict] = []
+    bad: list[str] = []
     for name, item in zip(names, result):
-        if "propertyId" not in item:
-            fail(f"Свойство {name}: {json.dumps(item.get('error'), ensure_ascii=False)}")
-        ids.append(item["propertyId"])
+        if "propertyId" in item:
+            good_names.append(name)
+            ids.append(item["propertyId"])
+        else:
+            bad.append(name)
+    return good_names, ids, bad
+
+
+def get_property_ids(names: list[str]) -> list[dict]:
+    """Строгий вариант: при любом нераспознанном имени — выход, но с перечислением
+    СРАЗУ ВСЕХ плохих имён (а не только первого). Порядок id совпадает с входным.
+    """
+    good_names, ids, bad = resolve_property_ids(names)
+    if bad:
+        fail(f"Свойства не найдены (проверь через find-prop): {', '.join(bad)}")
     return ids
 
 
-def cmd_values(args: list[str]) -> None:
-    if len(args) < 2:
-        fail("Формат: ac.py values <Тип> <Свойство1,Свойство2,...>")
-    el_type, prop_names = args[0], args[1].split(",")
-    elements = call("API.GetElementsByType", {"elementType": el_type})["elements"]
-    if not elements:
-        out([])
-        return
-    prop_ids = get_property_ids(prop_names)
+def _rows_for(elements: list[dict], prop_names: list[str]) -> list[dict]:
+    """Считывает свойства для заданных элементов в строки {guid, prop: value}.
+
+    Нераспознанные имена пропускаются с предупреждением в stderr (а не валят
+    весь запрос). Перечисления разворачиваются через unwrap().
+    """
+    good_names, prop_ids, bad = resolve_property_ids(prop_names)
+    if bad:
+        print(
+            json.dumps(
+                {"warning": f"Свойства пропущены (не найдены): {', '.join(bad)}"},
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+    if not prop_ids:
+        return [{"guid": e["elementId"]["guid"]} for e in elements]
     values = call(
         "API.GetPropertyValuesOfElements",
         {
@@ -134,10 +166,42 @@ def cmd_values(args: list[str]) -> None:
     rows = []
     for element, value_set in zip(elements, values):
         row = {"guid": element["elementId"]["guid"]}
-        for name, pv in zip(prop_names, value_set.get("propertyValues", [])):
+        for name, pv in zip(good_names, value_set.get("propertyValues", [])):
             row[name] = unwrap(pv.get("propertyValue", {}).get("value"))
         rows.append(row)
-    out(rows)
+    return rows
+
+
+def _read_guids(raw: str) -> list[str]:
+    if raw.startswith("@"):
+        raw = open(raw[1:], encoding="utf-8").read()
+    elif raw == "-":
+        raw = sys.stdin.read()
+    return [g.strip() for g in raw.replace("\n", ",").split(",") if g.strip()]
+
+
+def cmd_values(args: list[str]) -> None:
+    if len(args) < 2:
+        fail("Формат: ac.py values <Тип> <Свойство1,Свойство2,...>")
+    el_type, prop_names = args[0], args[1].split(",")
+    elements = call("API.GetElementsByType", {"elementType": el_type})["elements"]
+    if not elements:
+        out([])
+        return
+    out(_rows_for(elements, prop_names))
+
+
+def cmd_values_for(args: list[str]) -> None:
+    if len(args) < 2:
+        fail(
+            "Формат: ac.py values-for <guid,guid,...|@файл|-> <Свойство1,Свойство2,...>"
+        )
+    guids = _read_guids(args[0])
+    prop_names = args[1].split(",")
+    if not guids:
+        fail("Укажите хотя бы один GUID")
+    elements = [{"elementId": {"guid": g}} for g in guids]
+    out(_rows_for(elements, prop_names))
 
 
 def unwrap(value):
@@ -160,6 +224,7 @@ def main() -> None:
         "types": lambda: cmd_types(),
         "find-prop": lambda: cmd_find_prop(args),
         "values": lambda: cmd_values(args),
+        "values-for": lambda: cmd_values_for(args),
     }
     if cmd not in handlers:
         fail(f"Неизвестная команда: {cmd}. Доступно: {', '.join(handlers)}")

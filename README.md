@@ -17,7 +17,9 @@
 - Archicad 25 запущен, проект открыт
 - Python 3.10+ — [скачать с python.org](https://www.python.org/downloads/) или через Microsoft Store: `python3`
   (при установке отметить **«Add Python to PATH»**)
-- Claude Code
+- [Claude Desktop](https://claude.ai/download) — для общения с Claude
+- [Claude Code](https://claude.ai/code) (CLI) — для установки плагина и запуска скиллов;
+  после установки выполнить `claude` в терминале для первоначальной настройки
 
 ## Установка
 

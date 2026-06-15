@@ -15,7 +15,8 @@
 ## Требования
 
 - Archicad 25 запущен, проект открыт
-- Python 3.10+ (только стандартная библиотека)
+- Python 3.10+ — [скачать с python.org](https://www.python.org/downloads/) или через Microsoft Store: `python3`
+  (при установке отметить **«Add Python to PATH»**)
 - Claude Code
 
 ## Установка

@@ -14,9 +14,7 @@
 
 ### Способ 1: как плагин (рекомендуется)
 
-Репозиторий приватный, поэтому сначала нужен доступ к нему по git
-(достаточно один раз выполнить `gh auth login`, либо настроить git-credentials
-для github.com). Затем в Claude Code:
+В Claude Code:
 
 ```
 /plugin marketplace add ivan-zaikin/archicad-skill

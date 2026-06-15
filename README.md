@@ -43,6 +43,13 @@ node --version
 
 ### Шаг 4. Установить Claude Code CLI
 
+Сначала разрешите запуск скриптов (один раз, нужен админ):
+```
+Set-ExecutionPolicy RemoteSigned
+```
+На вопрос ответьте `Y` и нажмите **Enter**.
+
+Затем установите Claude Code:
 ```
 npm install -g @anthropic-ai/claude-code
 ```

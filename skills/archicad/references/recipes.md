@@ -124,27 +124,6 @@ python scripts/ac.py call API.GetClassificationsOfElements @params.json
 имена локализованные, как в интерфейсе Archicad (в русской версии — русские).
 Список всех свойств: `API.GetAllPropertyNames`.
 
-## Запись свойств (меняет проект — предупреди пользователя!)
-
-```bash
-python scripts/ac.py call API.SetPropertyValuesOfElements @set.json
-```
-
-set.json:
-```json
-{
-  "elementPropertyValues": [
-    {
-      "elementId": {"guid": "..."},
-      "propertyId": {"guid": "..."},
-      "propertyValue": {"value": "новое значение"}
-    }
-  ]
-}
-```
-
-Работает только с редактируемыми (UserDefined) свойствами.
-
 ## Этажи
 
 Отдельной команды списка этажей в AC25 нет, и встроенного свойства с

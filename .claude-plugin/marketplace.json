@@ -1,5 +1,6 @@
 {
   "name": "archicad-skill",
+  "version": "0.1.7",
   "owner": {
     "name": "ivan-zaikin",
     "email": "tnixton@gmail.com"
@@ -8,7 +9,7 @@
     {
       "name": "archicad-skill",
       "source": "./",
-      "description": "Работа с проектами Archicad 25 через JSON API: элементы, свойства, классификации, сводки и расчёты объёмов/площадей."
+      "description": "Работа с проектами Archicad 25 через JSON API: элементы, свойства, классификации, сводки и расчёты объёмов/площадей. Только чтение."
     }
   ]
 }

@@ -73,7 +73,19 @@ claude
 /plugin install archicad-skill@archicad-skill
 ```
 
-Обновление плагина в будущем: `/plugin marketplace update archicad-skill`
+---
+
+## Обновление плагина
+
+1. Нажмите **Win + R**, введите `powershell`, нажмите **Enter**
+2. Запустите Claude Code:
+```
+claude
+```
+3. Выполните в чате:
+```
+/plugin marketplace update archicad-skill
+```
 
 ---
 

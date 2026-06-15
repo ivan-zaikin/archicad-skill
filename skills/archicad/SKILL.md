@@ -25,7 +25,12 @@ API работает только когда Archicad запущен: `POST http
 1. Проверь соединение: `python scripts/ac.py info` — вернёт версию и сборку.
    Если ошибка — попроси пользователя запустить Archicad и открыть проект.
 2. Для обзора проекта: `python scripts/ac.py types` — количество элементов по типам.
-3. Дальше выбирай инструмент под задачу (см. ниже).
+3. **Перед любой ведомостью с зонами:** `python scripts/ac.py validate-zones` —
+   расхождение NetArea/CalculatedArea > 1% означает устаревшие зоны; скажи
+   пользователю пересчитать (Документ → Обновить → Зоны) до начала расчётов.
+4. **Этажи:** используй `python scripts/ac.py stories` вместо вычисления
+   разности отметок вручную — команда возвращает готовый список с elevation.
+5. Дальше выбирай инструмент под задачу (см. ниже).
 
 ## Инструменты
 
@@ -39,6 +44,8 @@ python scripts/ac.py call API.GetElementsByType "{\"elementType\": \"Zone\"}"
 python scripts/ac.py find-prop Volume            # поиск встроенных свойств
 python scripts/ac.py values Wall General_NetVolume,General_Area > walls.json
 python scripts/ac.py values-for GUID1,GUID2 General_Area,Construction_CompositeName
+python scripts/ac.py stories                     # список этажей из отметок стен
+python scripts/ac.py validate-zones              # кросс-проверка зон перед ведомостью
 ```
 
 `values` — главная рабочая лошадка для сводок: выгружает значения встроенных
@@ -77,6 +84,9 @@ pwsh -File scripts/ac.ps1 values Wall General_NetVolume,General_Area
   обёрток. Читай, когда нужна команда за пределами ac.py.
 - `references/recipes.md` — готовые рецепты: экспликация зон, ведомости
   объёмов, окна/двери, классификации, слои конструкций, запись свойств.
+  Включает: надёжный список этажей (`stories`), кросс-валидация зон
+  (`validate-zones`), проверка суммы стен зоны, BIM-классификации как
+  стабильный фильтр (OmniClass/UniClass вместо имён слоёв).
 - `references/ru-reports.md` — типовые документы российской практики
   (ГОСТ 21.501, СП 54.13330): экспликация помещений, ведомость отделки,
   спецификация заполнения проёмов, квартирография, ТЭП, экспликация полов.

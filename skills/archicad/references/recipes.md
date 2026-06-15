@@ -215,6 +215,146 @@ ids.json: `{"attributeIds": [{"attributeId": {"guid": "..."}}, ...]}`.
 Типы атрибутов: Layer, BuildingMaterial, Composite, Fill, Line, PenTable,
 Profile, Surface, ZoneCategory, LayerCombination.
 
+## Этажи: надёжный список из отметок стен
+
+```bash
+python scripts/ac.py stories
+```
+
+Возвращает массив `[{"story": 1, "elevation": 0.0, "wall_count": 142}, ...]`,
+отсортированный снизу вверх. Используй `elevation` для группировки любых
+элементов по этажу — вместо ненадёжного вычитания отметок на лету.
+
+Привязка элемента к этажу:
+```python
+from ac import call, _rows_for
+import json, subprocess, math
+
+stories_raw = subprocess.check_output(["python", "scripts/ac.py", "stories"])
+stories = json.loads(stories_raw)  # [{story, elevation, wall_count}, ...]
+
+def floor_of(z_proj, z_home):
+    elev = round(z_proj - z_home, 2)
+    # ближайший этаж снизу
+    below = [s for s in stories if s["elevation"] <= elev + 0.05]
+    return below[-1] if below else stories[0]
+```
+
+**Зоны:** если `z_proj - z_home` = 0 у всех зон, используй `z_proj` напрямую
+(отметка зоны от нуля проекта совпадает с отметкой этажа).
+
+**Окна/двери:** этаж проёма — этаж несущей стены, а не сам элемент.
+Берутся те же отметки (`General_BottomElevationToProjectZero`).
+
+## Кросс-валидация зон (запускай перед любой ведомостью)
+
+```bash
+python scripts/ac.py validate-zones
+```
+
+Сравнивает `Zone_NetArea` и `Zone_CalculatedArea` по каждой зоне.
+Расхождение > 1% → предупреждение: зоны устарели, надо пересчитать
+(Документ → Обновить/Перегенерировать → Зоны). Пока расхождение не устранено,
+площади зон из модели считаются ненадёжными.
+
+Вывод при проблемах:
+```json
+{
+  "zones_checked": 42,
+  "issues_count": 3,
+  "warning": "Пересчитайте зоны...",
+  "zones_with_issues": [
+    {"name": "Гостиная", "Zone_NetArea": 18.52, "Zone_CalculatedArea": 0.0, "diff_pct": 100.0}
+  ]
+}
+```
+
+`Zone_CalculatedArea` = 0 у непересчитанных зон — самый частый случай.
+
+## Проверка суммы стен зоны
+
+После расчёта ведомости отделки автоматически проверяй баланс:
+
+```python
+# После выгрузки зон с Zone_WallsSurfaceArea и Zone_WindowsSurfaceArea, Zone_DoorsSurfaceArea
+for z in zones:
+    total_wall = z.get("Zone_WallsSurfaceArea") or 0
+    wins = z.get("Zone_WindowsSurfaceArea") or 0
+    doors = z.get("Zone_DoorsSurfaceArea") or 0
+    finish = total_wall - wins - doors
+    if finish < 0:
+        print(f"ПРЕДУПРЕЖДЕНИЕ {z['Zone_ZoneName']}: площадь отделки < 0 "
+              f"({total_wall:.2f} − {wins:.2f} − {doors:.2f} = {finish:.2f})")
+```
+
+Отрицательный результат — признак незакрытых проёмов или незаданных размеров
+окон/дверей в модели. Нулевые значения `Zone_WindowsSurfaceArea` при наличии
+окон тоже сигнализируют: окна не привязаны к зоне (зона не покрывает проём).
+
+## BIM: классификации как стабильный идентификатор
+
+Слои проекта (`ModelView_LayerName`) — удобный фильтр, но нестабильный: имена
+меняются между проектами и компаниями. Классификации (OmniClass, UniClass,
+Uniformat) — семантически стабильны и переносимы.
+
+### Когда нужны классификации
+
+- Нужно отделить **несущие стены** от перегородок безо знания имён слоёв
+- Элементы одного типа в разных слоях (стены, разнесённые по слоям корпусов)
+- Задача пришла из другого проекта — слои другие, классификация та же
+
+### Рецепт: элементы по классификационному коду
+
+```bash
+# 1. Узнать, какие системы классификации есть в проекте
+python scripts/ac.py call API.GetAllClassificationSystems
+
+# 2. Дерево позиций нужной системы
+python scripts/ac.py call API.GetAllClassificationsInSystem \
+  "{\"classificationSystemId\": {\"guid\": \"<guid-системы>\"}}"
+
+# 3. Элементы с конкретной позицией (например, «Несущая стена»)
+python scripts/ac.py call API.GetElementsByClassification \
+  "{\"classificationItemId\": {\"guid\": \"<guid-позиции>\"}}"
+
+# 4. Проверить, какая классификация назначена конкретным элементам
+python scripts/ac.py call API.GetClassificationsOfElements @elements.json
+```
+
+### BIM-полнота: элементы без классификации
+
+```python
+from ac import call
+
+systems = call("API.GetAllClassificationSystems")["classificationSystems"]
+if not systems:
+    print("В проекте нет классификационных систем — BIM-фильтрация недоступна")
+else:
+    # Проверь назначение классификации для ключевых типов
+    for el_type in ["Wall", "Slab", "Column"]:
+        els = call("API.GetElementsByType", {"elementType": el_type})["elements"]
+        cls_data = call("API.GetClassificationsOfElements", {
+            "elements": els,
+            "classificationSystemIds": [{"classificationSystemId": s["classificationSystemId"]}
+                                        for s in systems],
+        })["elementClassifications"]
+        no_cls = sum(1 for ec in cls_data
+                     if all(not c.get("classificationItemId") for c in ec.get("elementClassifications", [])))
+        pct = round(no_cls / len(els) * 100) if els else 0
+        print(f"{el_type}: {no_cls}/{len(els)} без классификации ({pct}%)")
+```
+
+Высокий % без классификации = BIM-модель неполная, фильтрация по классам
+ненадёжна → переходи на слои или структуру (`Construction_CompositeName`).
+
+### Практическое правило
+
+| Ситуация | Используй |
+|---|---|
+| Проект одной компании, слои устоялись | `ModelView_LayerName` — проще |
+| Несколько проектов / разные команды | Классификацию |
+| Классификация не назначена (> 30% без кода) | `Construction_CompositeName` + `Construction_StructureType` |
+
 ## Диагностика
 
 | Симптом | Причина |

@@ -11,6 +11,10 @@
   python ac.py values-for <guid,..> <Свойство,..>
                                           — то же, но для конкретных GUID
                                             (список, @файл или - из stdin)
+  python ac.py stories                    — список этажей из отметок стен
+                                            (elevation м, wall_count, story №)
+  python ac.py validate-zones             — кросс-проверка зон: NetArea vs
+                                            CalculatedArea; предупреждение >1%
 
 Примеры:
   python ac.py call API.GetAllElements
@@ -204,6 +208,60 @@ def cmd_values_for(args: list[str]) -> None:
     out(_rows_for(elements, prop_names))
 
 
+def cmd_stories() -> None:
+    """Список этажей из отметок стен: elevation (м от нуля проекта), wall_count, story."""
+    elements = call("API.GetElementsByType", {"elementType": "Wall"})["elements"]
+    if not elements:
+        fail("Стены не найдены — невозможно определить этажи")
+    rows = _rows_for(elements, [
+        "General_BottomElevationToProjectZero",
+        "General_BottomElevationToHomeStory",
+    ])
+    counts: dict[float, int] = {}
+    for row in rows:
+        z_proj = row.get("General_BottomElevationToProjectZero")
+        z_home = row.get("General_BottomElevationToHomeStory")
+        if z_proj is None or z_home is None:
+            continue
+        elev = round(z_proj - z_home, 2)
+        counts[elev] = counts.get(elev, 0) + 1
+    stories = sorted(counts.items())
+    out([{"story": i + 1, "elevation": e, "wall_count": c}
+         for i, (e, c) in enumerate(stories)])
+
+
+def cmd_validate_zones() -> None:
+    """Валидация зон: NetArea vs CalculatedArea; предупреждение при расхождении >1%."""
+    elements = call("API.GetElementsByType", {"elementType": "Zone"})["elements"]
+    if not elements:
+        out({"ok": True, "zones_checked": 0})
+        return
+    rows = _rows_for(elements, [
+        "Zone_ZoneName", "Zone_ZoneNumber",
+        "Zone_NetArea", "Zone_CalculatedArea", "Zone_WallsSurfaceArea",
+    ])
+    issues = []
+    for row in rows:
+        net = row.get("Zone_NetArea") or 0
+        calc = row.get("Zone_CalculatedArea") or 0
+        if net > 0 and calc > 0 and abs(net - calc) / net > 0.01:
+            issues.append({
+                "guid": row["guid"],
+                "name": row.get("Zone_ZoneName"),
+                "number": row.get("Zone_ZoneNumber"),
+                "Zone_NetArea": round(net, 4),
+                "Zone_CalculatedArea": round(calc, 4),
+                "diff_pct": round(abs(net - calc) / net * 100, 1),
+            })
+    result: dict = {"zones_checked": len(rows), "issues_count": len(issues)}
+    if issues:
+        result["warning"] = "Пересчитайте зоны: Документ → Обновить/Перегенерировать → Зоны"
+        result["zones_with_issues"] = issues
+    else:
+        result["ok"] = True
+    out(result)
+
+
 def unwrap(value):
     # Перечисления приходят как {"type": "nonLocalizedValue", "nonLocalizedValue": ...}
     if isinstance(value, dict):
@@ -225,6 +283,8 @@ def main() -> None:
         "find-prop": lambda: cmd_find_prop(args),
         "values": lambda: cmd_values(args),
         "values-for": lambda: cmd_values_for(args),
+        "stories": lambda: cmd_stories(),
+        "validate-zones": lambda: cmd_validate_zones(),
     }
     if cmd not in handlers:
         fail(f"Неизвестная команда: {cmd}. Доступно: {', '.join(handlers)}")

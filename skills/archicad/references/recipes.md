@@ -291,6 +291,148 @@ for z in zones:
 окон/дверей в модели. Нулевые значения `Zone_WindowsSurfaceArea` при наличии
 окон тоже сигнализируют: окна не привязаны к зоне (зона не покрывает проём).
 
+## Геометрия из bounding boxes: когда свойствам зон нельзя доверять
+
+**Ограничение AC25 API:** полигон зоны (список вершин) API не отдаёт.
+Доступны только прямоугольные bounding boxes (`Get2DBoundingBoxes`,
+`Get3DBoundingBoxes`). Это не позволяет вычислить точную площадь — но даёт
+три полезных инструмента.
+
+### 1. Диагностика зон через zone-geometry
+
+```bash
+python scripts/ac.py zone-geometry
+```
+
+Для каждой зоны возвращает:
+- `bbox_area` — площадь описывающего прямоугольника (всегда ≥ реальной площади)
+- `fill_ratio` = Zone_NetArea / bbox_area:
+  - 0.7–1.0 — прямоугольная/почти прямоугольная комната (bbox надёжен)
+  - 0.4–0.7 — Г-образная или сложная форма (bbox завышен на 30–60%)
+  - < 0.35 — зона смещена или нестандартная форма, bbox бесполезен
+  - > 1.05 — **Zone_NetArea больше физического bbox**, зона не пересчитана
+- `bbox_height` — высота из 3D bbox; сравни с `General_Height`
+- `height_mismatch` — флаг расхождения высоты > 5 см (зона задана неправильно)
+
+**Применение:** если `fill_ratio` ≈ 1 (комната прямоугольная), а `Zone_NetArea`
+подозрительна (0 или нереальное значение) — `bbox_area` можно использовать как
+грубую оценку. Для сложных форм bbox не годится.
+
+### 2. Перекрытие как геометрический fallback для площади
+
+Перекрытие (`Slab`) — чисто геометрический объект. Его `General_NetTopSurfaceArea`
+вычисляется из реальной формы, независимо от состояния зон. Если удаётся
+сопоставить зону с её перекрытием, площадь перекрытия служит надёжным
+геометрическим ориентиром.
+
+**Ограничение:** в типовых жилых проектах перекрытие — одно на весь этаж, а не
+отдельное на каждое помещение. Тогда площадь перекрытия = площадь всего этажа,
+не конкретной комнаты. Подходит для проверки суммарной площади этажа.
+
+```python
+from ac import call, _rows_for
+import math
+
+zones  = call("API.GetElementsByType", {"elementType": "Zone"})["elements"]
+slabs  = call("API.GetElementsByType", {"elementType": "Slab"})["elements"]
+
+zone_rows = _rows_for(zones, [
+    "Zone_ZoneName", "Zone_ZoneNumber", "Zone_NetArea",
+    "General_BottomElevationToProjectZero",
+])
+slab_rows = _rows_for(slabs, [
+    "General_NetTopSurfaceArea", "General_Thickness",
+    "General_BottomElevationToProjectZero", "Construction_CompositeName",
+])
+
+zone_bb = call("API.Get2DBoundingBoxes", {"elements": zones})["boundingBoxes2D"]
+slab_bb = call("API.Get2DBoundingBoxes", {"elements": slabs})["boundingBoxes2D"]
+
+
+def intersect_area(a, b):
+    ix = max(0, min(a["xMax"], b["xMax"]) - max(a["xMin"], b["xMin"]))
+    iy = max(0, min(a["yMax"], b["yMax"]) - max(a["yMin"], b["yMin"]))
+    return ix * iy
+
+
+for zone_row, zb in zip(zone_rows, zone_bb):
+    if "boundingBox2D" not in zb:
+        continue
+    z_box  = zb["boundingBox2D"]
+    z_elev = zone_row.get("General_BottomElevationToProjectZero") or 0
+    z_bbox_area = (z_box["xMax"] - z_box["xMin"]) * (z_box["yMax"] - z_box["yMin"])
+
+    best, best_ratio = None, 0.0
+    for slab_row, sb in zip(slab_rows, slab_bb):
+        if "boundingBox2D" not in sb:
+            continue
+        s_box  = sb["boundingBox2D"]
+        s_elev = slab_row.get("General_BottomElevationToProjectZero") or 0
+        thick  = slab_row.get("General_Thickness") or 0
+        slab_top = s_elev + thick
+        # Верхняя грань перекрытия должна быть вблизи низа зоны (±50 см)
+        if abs(slab_top - z_elev) > 0.5:
+            continue
+        inter = intersect_area(z_box, s_box)
+        ratio = inter / z_bbox_area if z_bbox_area > 0 else 0
+        if ratio > best_ratio:
+            best_ratio, best = ratio, slab_row
+
+    if best and best_ratio > 0.5:
+        print(f"{zone_row['Zone_ZoneName']}: Zone_NetArea={zone_row.get('Zone_NetArea'):.2f} "
+              f"| slab_area={best.get('General_NetTopSurfaceArea'):.2f} "
+              f"| coverage={best_ratio:.2f} ({best.get('Construction_CompositeName')})")
+    else:
+        print(f"{zone_row['Zone_ZoneName']}: перекрытие не найдено (coverage={best_ratio:.2f})")
+```
+
+`coverage` = доля bbox зоны, перекрытая bbox перекрытия. При `coverage ≥ 0.8`
+соответствие надёжно. При `coverage ∈ [0.5, 0.8]` — частичное, данные ориентировочны.
+
+### 3. Высота зоны из 3D bounding box
+
+`General_Height` в AC25 — свойство, которое может не совпадать с реальной
+геометрией зоны (например, если зону вытянули не через инструмент зон, а
+вручную). Геометрически надёжный вариант:
+
+```python
+from ac import call
+zones = call("API.GetElementsByType", {"elementType": "Zone"})["elements"]
+bb3d  = call("API.Get3DBoundingBoxes", {"elements": zones})["boundingBoxes3D"]
+for z, b in zip(zones, bb3d):
+    if "boundingBox3D" in b:
+        box = b["boundingBox3D"]
+        geom_height = round(box["zMax"] - box["zMin"], 3)
+        # Это независимая от свойства высота — используй для ведомости отделки
+        # когда General_Height под вопросом
+```
+
+### 4. Суммарная площадь этажа через перекрытия (контроль ТЭП)
+
+Если зоны ненадёжны, сумму площадей этажа можно оценить через перекрытия —
+они не зависят от состояния зон:
+
+```bash
+python scripts/ac.py values Slab General_NetTopSurfaceArea,Construction_CompositeName,General_BottomElevationToProjectZero,General_BottomElevationToHomeStory,ModelView_LayerName > slabs.json
+```
+
+Сгруппируй по этажу (разность отметок), суммируй `General_NetTopSurfaceArea`.
+Это геометрическая площадь перекрытий — хорошее приближение к площади этажа
+для ТЭП (при условии, что перекрытия охватывают весь план и не задвоены).
+Сверяй с суммой `Zone_NetArea` по тому же этажу — расхождение > 5% требует
+объяснения.
+
+### Когда обращаться к IFC
+
+Если геометрической точности в рамках JSON API недостаточно (нестандартные
+формы, много Г-образных помещений, точная экспликация полов), следующий шаг —
+IFC-экспорт из Archicad + парсинг через IfcOpenShell:
+- `IfcSpace` содержит точный полигон помещения → точная площадь
+- `IfcRelSpaceBoundary` даёт связи пространство ↔ стены с реальными гранями
+- Минус: нужен ручной экспорт, данные — снимок на момент экспорта
+
+Это отдельный пайплайн; JSON API остаётся основным.
+
 ## BIM: классификации как стабильный идентификатор
 
 Слои проекта (`ModelView_LayerName`) — удобный фильтр, но нестабильный: имена

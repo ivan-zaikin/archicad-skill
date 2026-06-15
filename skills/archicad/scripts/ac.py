@@ -15,6 +15,8 @@
                                             (elevation м, wall_count, story №)
   python ac.py validate-zones             — кросс-проверка зон: NetArea vs
                                             CalculatedArea; предупреждение >1%
+  python ac.py zone-geometry              — зоны + bounding box геометрия:
+                                            bbox_area, fill_ratio, height_mismatch
 
 Примеры:
   python ac.py call API.GetAllElements
@@ -230,6 +232,54 @@ def cmd_stories() -> None:
          for i, (e, c) in enumerate(stories)])
 
 
+def cmd_zone_geometry() -> None:
+    """Зоны + геометрия из bounding boxes: bbox_area, fill_ratio, height cross-check."""
+    zones = call("API.GetElementsByType", {"elementType": "Zone"})["elements"]
+    if not zones:
+        out([])
+        return
+    rows = _rows_for(zones, [
+        "Zone_ZoneName", "Zone_ZoneNumber",
+        "Zone_NetArea", "Zone_CalculatedArea",
+        "Zone_WallsSurfaceArea",
+        "General_Height",
+        "General_BottomElevationToProjectZero",
+    ])
+    bb2d = call("API.Get2DBoundingBoxes", {"elements": zones})["boundingBoxes2D"]
+    bb3d = call("API.Get3DBoundingBoxes", {"elements": zones})["boundingBoxes3D"]
+
+    results = []
+    for row, b2, b3 in zip(rows, bb2d, bb3d):
+        entry = dict(row)
+        if "boundingBox2D" in b2:
+            box = b2["boundingBox2D"]
+            w = box["xMax"] - box["xMin"]
+            d = box["yMax"] - box["yMin"]
+            bbox_area = round(w * d, 4)
+            entry["bbox_area"] = bbox_area
+            net = row.get("Zone_NetArea") or 0
+            if net > 0 and bbox_area > 0:
+                fill = round(net / bbox_area, 3)
+                entry["fill_ratio"] = fill
+                if net > bbox_area * 1.05:
+                    entry["warning"] = "Zone_NetArea > bbox — зона не пересчитана"
+                elif fill < 0.35:
+                    entry["note"] = "fill_ratio<0.35 — нестандартная форма или зона смещена"
+        if "boundingBox3D" in b3:
+            box3 = b3["boundingBox3D"]
+            bbox_h = round(box3["zMax"] - box3["zMin"], 3)
+            entry["bbox_height"] = bbox_h
+            prop_h = row.get("General_Height") or 0
+            if prop_h > 0 and abs(bbox_h - prop_h) > 0.05:
+                entry["height_mismatch"] = {
+                    "General_Height": round(prop_h, 3),
+                    "bbox_height": bbox_h,
+                    "diff": round(abs(bbox_h - prop_h), 3),
+                }
+        results.append(entry)
+    out(results)
+
+
 def cmd_validate_zones() -> None:
     """Валидация зон: NetArea vs CalculatedArea; предупреждение при расхождении >1%."""
     elements = call("API.GetElementsByType", {"elementType": "Zone"})["elements"]
@@ -285,6 +335,7 @@ def main() -> None:
         "values-for": lambda: cmd_values_for(args),
         "stories": lambda: cmd_stories(),
         "validate-zones": lambda: cmd_validate_zones(),
+        "zone-geometry": lambda: cmd_zone_geometry(),
     }
     if cmd not in handlers:
         fail(f"Неизвестная команда: {cmd}. Доступно: {', '.join(handlers)}")

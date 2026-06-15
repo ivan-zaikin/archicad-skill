@@ -46,6 +46,7 @@ python scripts/ac.py values Wall General_NetVolume,General_Area > walls.json
 python scripts/ac.py values-for GUID1,GUID2 General_Area,Construction_CompositeName
 python scripts/ac.py stories                     # список этажей из отметок стен
 python scripts/ac.py validate-zones              # кросс-проверка зон перед ведомостью
+python scripts/ac.py zone-geometry               # bbox-геометрия зон: fill_ratio, height_mismatch
 ```
 
 `values` — главная рабочая лошадка для сводок: выгружает значения встроенных
@@ -85,8 +86,9 @@ pwsh -File scripts/ac.ps1 values Wall General_NetVolume,General_Area
 - `references/recipes.md` — готовые рецепты: экспликация зон, ведомости
   объёмов, окна/двери, классификации, слои конструкций, запись свойств.
   Включает: надёжный список этажей (`stories`), кросс-валидация зон
-  (`validate-zones`), проверка суммы стен зоны, BIM-классификации как
-  стабильный фильтр (OmniClass/UniClass вместо имён слоёв).
+  (`validate-zones`), геометрия из bounding boxes (`zone-geometry`),
+  матчинг зон с перекрытиями как геометрический fallback для площадей,
+  проверка суммы стен зоны, BIM-классификации как стабильный фильтр.
 - `references/ru-reports.md` — типовые документы российской практики
   (ГОСТ 21.501, СП 54.13330): экспликация помещений, ведомость отделки,
   спецификация заполнения проёмов, квартирография, ТЭП, экспликация полов.
@@ -95,6 +97,25 @@ pwsh -File scripts/ac.ps1 values Wall General_NetVolume,General_Area
   Быстрее искать через `ac.py find-prop <подстрока>`.
 - `references/supported_commands.json` — точный список команд, реально
   поддерживаемых сборкой пользователя (результат зондирования).
+
+## Когда свойствам зон нельзя доверять
+
+В реальных проектах зоны часто не пересчитаны, площади — 0 или устаревшие.
+Иерархия источников для площади зоны (от надёжного к приближённому):
+
+1. `Zone_NetArea` при `validate-zones` без ошибок → **доверяй**
+2. Площадь верхней грани перекрытия под зоной (`General_NetTopSurfaceArea`) →
+   геометрический факт, независимый от зон; подходит для суммы по этажу
+3. `bbox_area` из `zone-geometry` при `fill_ratio ≥ 0.85` →
+   комната прямоугольная, bbox близок к реальности
+4. `bbox_area` при `fill_ratio < 0.85` → только порядок величины
+
+Для высоты: `bbox_height` из `zone-geometry` (`Get3DBoundingBoxes`) —
+геометрически точен; используй при наличии `height_mismatch` в выводе.
+
+**API не отдаёт полигон зоны** — точная площадь нестандартной формы
+из API невозможна. Для полигональной точности нужен IFC-экспорт
+(IfcSpace содержит контур; отдельный пайплайн с IfcOpenShell).
 
 ## Особенности Archicad 25 (важно, сэкономит время)
 

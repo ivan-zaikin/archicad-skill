@@ -41,7 +41,13 @@ node --version
 
 ### Шаг 4. Установить Claude Code CLI
 
-В терминале выполните:
+Сначала разрешите выполнение скриптов в PowerShell (один раз):
+```
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+На вопрос ответьте `Y` и нажмите **Enter**.
+
+Затем установите Claude Code:
 ```
 npm install -g @anthropic-ai/claude-code
 ```

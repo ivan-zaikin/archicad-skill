@@ -84,8 +84,94 @@ python scripts/ac.py call API.GetElementsRelatedToZones "{\"zones\": [{\"element
 ```
 
 ⚠️ Список **неполный**: стены, которые Archicad не привязал к зоне, в выборку
-не попадут (видели 5 стен вместо ~10). Годится для «какие элементы рядом», но
-не для обмеров. Полную поверхность стен зоны бери из `Zone_WallsSurfaceArea`.
+не попадут (видели 5 стен вместо ~10). Монолитные стены (ЖБ-ядро) и колонны
+команда стабильно пропускает. Годится для «какие элементы рядом», но не для
+обмеров. Полную поверхность стен зоны бери из `Zone_WallsSurfaceArea`, а для
+полного перечня элементов — пространственную привязку (ниже).
+
+## Пространственная привязка элементов к зоне (fallback для GetElementsRelatedToZones)
+
+Когда `GetElementsRelatedToZones` пропускает элементы (монолитные стены,
+колонны, пилястры), привязывай их к зоне по пересечению 2D bounding box'ов.
+Универсальный приём; параметры подбираются под тип элемента.
+
+```python
+from ac import call, _rows_for
+
+ZONE_GUID = "..."  # целевая зона
+
+def bbox_of(elements):
+    bbs = call("API.Get2DBoundingBoxes", {"elements": elements})["boundingBoxes2D"]
+    return [b.get("boundingBox2D") for b in bbs]
+
+def overlap(a, b):  # площадь пересечения двух bbox (0, если не пересекаются)
+    if not a or not b:
+        return 0.0
+    ix = max(0, min(a["xMax"], b["xMax"]) - max(a["xMin"], b["xMin"]))
+    iy = max(0, min(a["yMax"], b["yMax"]) - max(a["yMin"], b["yMin"]))
+    return ix * iy
+
+def expand(box, m):  # расширить/сжать bbox на m метров с каждой стороны
+    return {"xMin": box["xMin"] - m, "xMax": box["xMax"] + m,
+            "yMin": box["yMin"] - m, "yMax": box["yMax"] + m}
+
+def center(box):
+    return ((box["xMin"] + box["xMax"]) / 2, (box["yMin"] + box["yMax"]) / 2)
+
+zone_box = bbox_of([{"elementId": {"guid": ZONE_GUID}}])[0]
+```
+
+**Стены в зоне (вкл. монолитные)** — берут все стены этажа, оставляют те, чей
+bbox заметно пересекается с зоной:
+
+```python
+walls = call("API.GetElementsByType", {"elementType": "Wall"})["elements"]
+wbb = bbox_of(walls)
+in_zone = [w for w, b in zip(walls, wbb) if overlap(zone_box, b) > 0.01]
+# Отфильтруй по этажу (отметка) заранее, чтобы не ловить стены других этажей.
+```
+
+**Колонны в зоне** (`elementTypes:["Column"]` их не возвращает) — по центру
+bbox колонны внутри bbox зоны:
+
+```python
+cols = call("API.GetElementsByType", {"elementType": "Column"})["elements"]
+cbb = bbox_of(cols)
+def inside(pt, box):
+    return box["xMin"] <= pt[0] <= box["xMax"] and box["yMin"] <= pt[1] <= box["yMax"]
+cols_in_zone = [c for c, b in zip(cols, cbb) if b and inside(center(b), zone_box)]
+```
+
+**Пилястры** — короткие монолитные стены, встроенные в зону; bbox квартиры
+может их не накрывать. Ищи узкие стены (ширина < порога), пересекающие зону с
+допуском:
+
+```python
+narrow = _rows_for(walls, ["General_Width"])  # ширина стены
+zone_tol = expand(zone_box, -0.2)  # допуск −0,2 м (пилястра чуть за границей)
+pilasters = [w for w, b, r in zip(walls, wbb, narrow)
+             if (r.get("General_Width") or 99) < 1.0 and overlap(zone_tol, b) > 0.001]
+```
+
+⚠️ bbox — прямоугольник, у Г-образных зон он завышен; результат всегда
+**показывай пользователю на сверку**, пороги (0,01 м² перекрытия, ширина 1 м,
+допуск 0,2 м) подбирай под проект.
+
+## Проёмы зоны с GUID и размерами (для разбивки по материалам)
+
+`Zone_DoorsSurfaceArea` / `Zone_WindowsSurfaceArea` дают только **суммарную**
+площадь, но не перечень проёмов и не то, к какой стене (материалу) они относятся.
+Чтобы получить конкретные двери/окна зоны с GUID и габаритами:
+
+```bash
+python scripts/ac.py call API.GetElementsRelatedToZones "{\"zones\": [{\"elementId\": {\"guid\": \"...\"}}], \"elementTypes\": [\"Window\", \"Door\"]}"
+```
+
+затем по полученным GUID — `values-for ... General_Width,General_Height`. ⚠️ Тот
+же изъян неполноты: проёмы в непривязанных стенах могут не вернуться. Для
+надёжного перечня используй пространственную привязку (выше) к bbox зоны.
+Связать проём с материалом стены напрямую API не позволяет — определяй по
+вмещающей стене (overlap bbox проёма с bbox стены).
 
 ## Зоны по секции/блоку (поле «ID»)
 
@@ -152,14 +238,52 @@ python scripts/ac.py zone-categories
 команды). Но `Zone_CalculatedArea = 0` у **всех** зон — признак реально
 непересчитанных зон.
 
+## Площадь пола лестничной клетки (межэтажные площадки)
+
+`GetElementsRelatedToZones` не возвращает плиты межэтажных площадок (Slab между
+этажами), поэтому если считать площадь пола лестничной клетки только по
+`Zone_NetArea`, она **занижена** — площадки выпадают. Добавь к площади зоны
+перекрытия (Slab), попадающие в её bbox на промежуточных отметках:
+
+```python
+from ac import call, _rows_for
+
+ZONE_GUID = "..."
+zone_box = call("API.Get2DBoundingBoxes",
+                {"elements": [{"elementId": {"guid": ZONE_GUID}}]})["boundingBoxes2D"][0]["boundingBox2D"]
+
+slabs = call("API.GetElementsByType", {"elementType": "Slab"})["elements"]
+srows = _rows_for(slabs, ["General_NetTopSurfaceArea", "General_BottomElevationToProjectZero"])
+sbb = call("API.Get2DBoundingBoxes", {"elements": slabs})["boundingBoxes2D"]
+
+def overlap(a, b):
+    ix = max(0, min(a["xMax"], b["xMax"]) - max(a["xMin"], b["xMin"]))
+    iy = max(0, min(a["yMax"], b["yMax"]) - max(a["yMin"], b["yMin"]))
+    return ix * iy
+
+landings = []
+for r, b in zip(srows, sbb):
+    box = b.get("boundingBox2D")
+    if box and overlap(zone_box, box) > 0.1:   # плита в плане лестничной клетки
+        landings.append(r)
+# Площадки между этажами — их NetTopSurfaceArea добавляется к Zone_NetArea.
+```
+
+⚠️ В bbox зоны попадут и основные перекрытия этажей — отфильтруй по отметке
+(`General_BottomElevationToProjectZero`): площадки лежат **между** этажами, а не
+на отметке этажа зоны. Согласуй список найденных площадок с пользователем.
+
 ## Колонны в отделке стен
 
 Колонны, выходящие в помещение, входят в ведомость отделки наравне со стенами,
 но считаются иначе:
 
-- Материал колонны **не** в `Construction_CompositeName` (там `notAvailable`) —
-  смотри группу свойств `Column_*` (`Column_CoreDepth`, `Column_CoreWidth`) и
-  строительный материал ядра через атрибуты.
+- Материал колонны **не** в `Construction_CompositeName` (у колонн он всегда
+  `null`/`notAvailable`). Рабочий fallback — `SurfaceAndMaterials_ComponentBuildingMaterialName`
+  (строительный материал ядра: «Бетон», «Сталь»…); габариты ядра — `Column_CoreDepth`,
+  `Column_CoreWidth`. Свойства `Construction_LayerCompositions` в AC25 **нет** —
+  не пытайся через него. Если и `SurfaceAndMaterials_*` пуст — определяй материал
+  по строительному материалу ядра через атрибуты (`GetBuildingMaterialAttributes`).
 - `Column_NetCoreSideSurfaceArea` — боковая поверхность по **всей** высоте
   колонны (колонна может идти сквозь весь дом, напр. 24 м). Для одного
   помещения бери долю: `периметр_открытых_граней × высота_зоны`
@@ -395,6 +519,33 @@ for z in zones:
 Отрицательный результат — признак незакрытых проёмов или незаданных размеров
 окон/дверей в модели. Нулевые значения `Zone_WindowsSurfaceArea` при наличии
 окон тоже сигнализируют: окна не привязаны к зоне (зона не покрывает проём).
+
+### Скрытые (непоимённованные) проёмы в Zone_WallsSurfaceArea
+
+`Zone_WallsSurfaceArea` Archicad считает по геометрии и **вычитает все** проёмы,
+включая витражи и широкие проходы, которые НЕ попадают ни в
+`Zone_DoorsSurfaceArea`, ни в `Zone_WindowsSurfaceArea`. Из-за этого фактическая
+поверхность стен оказывается меньше «периметр × высота − двери − окна», и при
+разбивке по материалам часть площади теряется незаметно. Проверяй разрыв:
+
+```python
+THRESHOLD = 0.5  # м²; разрыв больше — есть непоимённованные проёмы
+for z in zones:
+    perim  = z.get("Zone_NetPerimeter") or 0
+    h      = z.get("General_Height") or 0
+    walls  = z.get("Zone_WallsSurfaceArea") or 0
+    named  = (z.get("Zone_DoorsSurfaceArea") or 0) + (z.get("Zone_WindowsSurfaceArea") or 0)
+    gap = perim * h - named - walls   # сколько «съедено» сверх учтённых проёмов
+    if gap > THRESHOLD:
+        print(f"ПРЕДУПРЕЖДЕНИЕ {z['Zone_ZoneName']}: ~{gap:.2f} м² стен «съедено» "
+              f"проёмами вне Zone_Doors/WindowsSurfaceArea (витражи, широкие проходы). "
+              f"Уточни вручную, прежде чем делить отделку по материалам.")
+```
+
+`perim × h` — грубая оценка (см. оговорку про периметр×высоту в ru-reports.md),
+поэтому порог держи не слишком жёстким (0,3–0,5 м²). Замечен в КУИ и тамбурах
+с витражным остеклением. При срабатывании — найди проёмы зоны через
+пространственную привязку (см. «Проёмы зоны с GUID») и согласуй с пользователем.
 
 ## Геометрия из bounding boxes: когда свойствам зон нельзя доверять
 

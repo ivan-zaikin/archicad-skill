@@ -32,10 +32,16 @@
 
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
 API_URL = "http://127.0.0.1:19723"
+
+
+class ApiBusyError(Exception):
+    """Archicad занят вводом (ошибка 4001): открыт модальный диалог или активен
+    инструмент. Запросы не выполняются, пока диалог не закрыт."""
 
 ELEMENT_TYPES = [
     "Wall", "Column", "Beam", "Window", "Door", "Object", "Lamp", "Slab",
@@ -44,7 +50,9 @@ ELEMENT_TYPES = [
 ]
 
 
-def call(command: str, parameters: dict | None = None) -> dict:
+def _request(command: str, parameters: dict | None = None) -> dict:
+    """Низкоуровневый вызов API. При ошибке 4001 (открыт диалог) бросает
+    ApiBusyError, при прочих ошибках — fail() (аварийный выход)."""
     payload: dict = {"command": command}
     if parameters is not None:
         payload["parameters"] = parameters
@@ -65,10 +73,38 @@ def call(command: str, parameters: dict | None = None) -> dict:
         # 4001 / «ongoing user input» — в Archicad открыт модальный диалог или
         # активен инструмент ввода; пока он не закрыт, API не отвечает на запросы.
         if code == 4001 or "user input" in msg.lower():
-            fail("Archicad занят вводом: похоже, открыт модальный диалог или активен "
-                 "инструмент. Закрой диалог/заверши ввод в Archicad и повтори.")
+            raise ApiBusyError(msg or "ongoing user input")
         fail(f"{command}: {json.dumps(err, ensure_ascii=False)}")
     return result["result"]
+
+
+def call(command: str, parameters: dict | None = None) -> dict:
+    """Вызов API. При открытом диалоге (4001) сразу падает с подсказкой.
+    Для пакетных скриптов, где диалог можно успеть закрыть, см. call_with_retry."""
+    try:
+        return _request(command, parameters)
+    except ApiBusyError:
+        fail("Archicad занят вводом: похоже, открыт модальный диалог или активен "
+             "инструмент. Закрой диалог/заверши ввод в Archicad и повтори.")
+
+
+def call_with_retry(command: str, parameters: dict | None = None,
+                    attempts: int = 5, delay: int = 4) -> dict:
+    """Как call(), но при ошибке «занят вводом» (открыт диалог) повторяет до
+    attempts раз с паузой delay сек — даёт время закрыть диалог в Archicad.
+    Полезно в долгих пакетных скриптах: from ac import call_with_retry."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return _request(command, parameters)
+        except ApiBusyError:
+            if attempt == attempts:
+                fail(f"Archicad всё ещё занят вводом после {attempts} попыток. "
+                     "Закрой модальный диалог/заверши ввод в Archicad и запусти снова.")
+            print(json.dumps(
+                {"retry": f"Archicad занят (открыт диалог?), попытка {attempt}/{attempts}, "
+                          f"жду {delay} с — закрой диалог в Archicad"},
+                ensure_ascii=False), file=sys.stderr)
+            time.sleep(delay)
 
 
 def fail(message: str) -> None:

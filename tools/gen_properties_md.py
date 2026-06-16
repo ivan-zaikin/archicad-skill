@@ -44,8 +44,11 @@ def main() -> None:
         "",
         "Самые ходовые: `General_NetVolume` (объём), `General_Area` (площадь),"
         " `General_Height`, `General_ElementID`,"
+        " `IdAndCategories_ElementID` (поле «ID» из раздела «ID и Категории» —"
+        " им метят секцию/блок зоны: А, Б, В…),"
         " `General_Type` (тип элемента, локализованный; `General_TypeName` в AC25 нет),"
-        " `Zone_ZoneName`, `Zone_NetArea`, `Zone_ZoneCategoryCode`."
+        " `Zone_ZoneName`, `Zone_NetArea`,"
+        " `Zone_ZoneCategoryCode` (код категории; расшифровка — `ac.py zone-categories`)."
         " Имени этажа среди встроенных свойств нет — вычисляй отметку этажа"
         " как `General_BottomElevationToProjectZero` −"
         " `General_BottomElevationToHomeStory`.",

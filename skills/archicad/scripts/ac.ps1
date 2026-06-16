@@ -22,6 +22,13 @@
 $ErrorActionPreference = 'Stop'
 $ApiUrl = 'http://127.0.0.1:19723'
 
+# Вывод всегда в UTF-8 (кириллица в именах зон не должна ломать `> out.json`).
+try {
+    $utf8 = [System.Text.UTF8Encoding]::new($false)
+    $OutputEncoding = $utf8
+    [Console]::OutputEncoding = $utf8
+} catch { }
+
 $ElementTypes = @(
     'Wall', 'Column', 'Beam', 'Window', 'Door', 'Object', 'Lamp', 'Slab',
     'Roof', 'Mesh', 'Zone', 'CurtainWall', 'Shell', 'Skylight', 'Morph',
@@ -48,6 +55,11 @@ function Invoke-Ac([string]$Command, $Parameters = $null) {
         Fail "Archicad API недоступен ($($_.Exception.Message)). Archicad запущен?"
     }
     if (-not $r.succeeded) {
+        $msg = [string]$r.error.message
+        # 4001 / «ongoing user input» — в Archicad открыт модальный диалог.
+        if ($r.error.code -eq 4001 -or $msg.ToLower().Contains('user input')) {
+            Fail 'Archicad занят вводом: похоже, открыт модальный диалог или активен инструмент. Закрой диалог/заверши ввод в Archicad и повтори.'
+        }
         Fail "${Command}: $($r.error | ConvertTo-Json -Compress)"
     }
     return $r.result

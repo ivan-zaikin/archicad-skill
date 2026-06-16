@@ -17,6 +17,8 @@
                                             CalculatedArea; предупреждение >1%
   python ac.py zone-geometry              — зоны + bounding box геометрия:
                                             bbox_area, fill_ratio, height_mismatch
+  python ac.py zone-categories            — категории зон: имя + код
+                                            (расшифровка Zone_ZoneCategoryCode)
 
 Примеры:
   python ac.py call API.GetAllElements
@@ -57,7 +59,15 @@ def call(command: str, parameters: dict | None = None) -> dict:
     except urllib.error.URLError as e:
         fail(f"Archicad API недоступен ({e}). Archicad запущен?")
     if not result.get("succeeded"):
-        fail(f"{command}: {json.dumps(result.get('error'), ensure_ascii=False)}")
+        err = result.get("error") or {}
+        msg = err.get("message", "") if isinstance(err, dict) else ""
+        code = err.get("code") if isinstance(err, dict) else None
+        # 4001 / «ongoing user input» — в Archicad открыт модальный диалог или
+        # активен инструмент ввода; пока он не закрыт, API не отвечает на запросы.
+        if code == 4001 or "user input" in msg.lower():
+            fail("Archicad занят вводом: похоже, открыт модальный диалог или активен "
+                 "инструмент. Закрой диалог/заверши ввод в Archicad и повтори.")
+        fail(f"{command}: {json.dumps(err, ensure_ascii=False)}")
     return result["result"]
 
 
@@ -280,6 +290,33 @@ def cmd_zone_geometry() -> None:
     out(results)
 
 
+def cmd_zone_categories() -> None:
+    """Категории зон: имя + код одним вызовом.
+
+    Иначе нужны два шага: GetAttributesByType(ZoneCategory) → берёшь attributeId →
+    GetZoneCategoryAttributes. Код категории здесь — то же, что свойство
+    `Zone_ZoneCategoryCode` у зон (по нему фильтруются жилые/летние/МОП).
+    """
+    listed = call("API.GetAttributesByType", {"attributeType": "ZoneCategory"})
+    items = listed.get("attributes", [])
+    ids = [{"attributeId": it["attributeId"]} for it in items if "attributeId" in it]
+    if not ids:
+        out([])
+        return
+    details = call("API.GetZoneCategoryAttributes", {"attributeIds": ids})
+    rows = []
+    for d in details.get("attributes", []):
+        # Структура: {"zoneCategoryAttribute": {...}}; имя поля кода может
+        # отличаться между сборками — берём оба распространённых варианта.
+        attr = d.get("zoneCategoryAttribute", d)
+        rows.append({
+            "name": attr.get("name"),
+            "categoryCode": attr.get("categoryCode") or attr.get("code"),
+            "guid": (attr.get("attributeId") or {}).get("guid"),
+        })
+    out(rows)
+
+
 def cmd_validate_zones() -> None:
     """Валидация зон: NetArea vs CalculatedArea; предупреждение при расхождении >1%."""
     elements = call("API.GetElementsByType", {"elementType": "Zone"})["elements"]
@@ -305,7 +342,14 @@ def cmd_validate_zones() -> None:
             })
     result: dict = {"zones_checked": len(rows), "issues_count": len(issues)}
     if issues:
-        result["warning"] = "Пересчитайте зоны: Документ → Обновить/Перегенерировать → Зоны"
+        result["warning"] = (
+            "Расхождение NetArea/CalculatedArea. Причина 1: зоны устарели — "
+            "пересчитай (Документ → Обновить/Перегенерировать → Зоны), особенно "
+            "если CalculatedArea = 0. Причина 2 (норма, не ошибка): летние "
+            "помещения (лоджия/балкон) — CalculatedArea применяет понижающий "
+            "коэффициент категории, поэтому законно меньше NetArea. Проверь "
+            "категорию зоны (zone-categories), прежде чем пересчитывать."
+        )
         result["zones_with_issues"] = issues
     else:
         result["ok"] = True
@@ -322,6 +366,14 @@ def unwrap(value):
 
 
 def main() -> None:
+    # Вывод всегда в UTF-8, независимо от кодовой страницы консоли Windows.
+    # Без этого `... > out.json` на русской Windows пишет файл в cp1251, и
+    # последующее чтение как UTF-8 падает с UnicodeDecodeError.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8")
+        except (AttributeError, ValueError):
+            pass
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(0)
@@ -336,6 +388,7 @@ def main() -> None:
         "stories": lambda: cmd_stories(),
         "validate-zones": lambda: cmd_validate_zones(),
         "zone-geometry": lambda: cmd_zone_geometry(),
+        "zone-categories": lambda: cmd_zone_categories(),
     }
     if cmd not in handlers:
         fail(f"Неизвестная команда: {cmd}. Доступно: {', '.join(handlers)}")
